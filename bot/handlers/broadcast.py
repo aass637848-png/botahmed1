@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from bot.models.target import Target
 from bot.models.campaign import Campaign
+from bot.models.account import Account
 from bot.utils.states import BroadcastStates
 from bot.utils.validators import (
     validate_positive_int,
@@ -22,6 +23,7 @@ from bot.keyboards.campaign_kb import (
     get_delay_presets_keyboard,
     get_schedule_options_keyboard,
     get_campaign_confirm_keyboard,
+    get_sender_choice_keyboard,
 )
 from bot.services.broadcast_worker import execute_campaign, is_any_target_locked
 from bot.services.scheduler_service import schedule_campaign
@@ -33,8 +35,8 @@ router = Router(name="broadcast_router")
 @router.callback_query(F.data == "menu_broadcast")
 async def cb_start_broadcast_wizard(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     """بدء معالج إنشاء حملة إرسال"""
-    # Check if user has targets
-    stmt = select(Target).where(Target.owner_id == call.from_user.id)
+    # Check if there are shared targets
+    stmt = select(Target).where(Target.is_active == True)
     res = await session.execute(stmt)
     targets = res.scalars().all()
 
@@ -93,8 +95,8 @@ async def process_content_input(message: Message, state: FSMContext, session: As
         await message.answer("⚠️ نوع المحتوى غير مدعوم. يرجى إرسال نص، صورة، فيديو، أو ملف.")
         return
 
-    # Fetch user's active targets
-    stmt = select(Target).where(Target.owner_id == message.from_user.id)
+    # Fetch active shared targets
+    stmt = select(Target).where(Target.is_active == True)
     res = await session.execute(stmt)
     targets = res.scalars().all()
 
@@ -185,8 +187,8 @@ async def cb_deselect_all_targets(call: CallbackQuery, state: FSMContext, sessio
 
 
 @router.callback_query(BroadcastStates.selecting_targets, F.data == "sel_targets_done")
-async def cb_targets_done(call: CallbackQuery, state: FSMContext) -> None:
-    """إتمام اختيار الأهداف والانتقال لخيارات التكرار"""
+async def cb_targets_done(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    """إتمام اختيار الأهداف والانتقال لاختيار جهة الإرسال"""
     data = await state.get_data()
     selected_ids = data.get("selected_target_ids", [])
 
@@ -194,18 +196,60 @@ async def cb_targets_done(call: CallbackQuery, state: FSMContext) -> None:
         await call.answer("⚠️ يرجى تحديد هدف واحد على الأقل للمتابعة!", show_alert=True)
         return
 
+    # Check available connected accounts
+    stmt = select(Account).where(Account.is_active == True)
+    res = await session.execute(stmt)
+    accounts = res.scalars().all()
+
+    if accounts:
+        await state.set_state(BroadcastStates.waiting_for_sender)
+        text = (
+            f"🎯 <b>تم اختيار {len(selected_ids)} هدف.</b>\n\n"
+            "👤 <b>الخطوة 3: اختيار جهة الإرسال</b>\n"
+            "يمكنك الإرسال عبر البوت الرسمي أو عبر أي حساب يوزر متصل:"
+        )
+        await call.message.edit_text(
+            text=text,
+            reply_markup=get_sender_choice_keyboard(accounts),
+            parse_mode="HTML",
+        )
+    else:
+        # Default to bot if no accounts connected
+        await state.update_data(sender_type="bot", sender_account_id=None)
+        await prompt_repeat_step(call.message, state, len(selected_ids))
+
+    await call.answer()
+
+
+@router.callback_query(BroadcastStates.waiting_for_sender, F.data.startswith("sender_type_"))
+async def cb_sender_chosen(call: CallbackQuery, state: FSMContext) -> None:
+    """معالجة اختيار جهة الإرسال"""
+    choice = call.data
+    if choice == "sender_type_bot":
+        await state.update_data(sender_type="bot", sender_account_id=None)
+    else:
+        acc_id = int(choice.split("_")[3])
+        await state.update_data(sender_type="userbot", sender_account_id=acc_id)
+
+    data = await state.get_data()
+    tgt_count = len(data.get("selected_target_ids", []))
+    await call.answer()
+    await prompt_repeat_step(call.message, state, tgt_count)
+
+
+async def prompt_repeat_step(msg: Message, state: FSMContext, target_count: int) -> None:
+    """الانتقال لخطوة التكرار"""
     await state.set_state(BroadcastStates.waiting_for_repeat)
     text = (
-        f"🎯 <b>تم اختيار {len(selected_ids)} هدف.</b>\n\n"
-        "🔁 <b>الخطوة 3: عدد مرات التكرار</b>\n"
+        f"🎯 <b>تم تحديد الأهداف وجهة الإرسال.</b>\n\n"
+        "🔁 <b>الخطوة 4: عدد مرات التكرار</b>\n"
         "كم مرة ترغب في إرسال الرسالة إلى هذه الأهداف؟"
     )
-    await call.message.edit_text(
+    await msg.edit_text(
         text=text,
         reply_markup=get_repeat_presets_keyboard(),
         parse_mode="HTML",
     )
-    await call.answer()
 
 
 @router.callback_query(BroadcastStates.waiting_for_repeat, F.data.startswith("repeat_"))
@@ -443,6 +487,8 @@ async def cb_confirm_and_launch(call: CallbackQuery, state: FSMContext, bot: Bot
     campaign = Campaign(
         owner_id=call.from_user.id,
         name=f"حملة {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        sender_type=data.get("sender_type", "bot"),
+        sender_account_id=data.get("sender_account_id"),
         content_type=data.get("content_type", "text"),
         text_content=data.get("text_content"),
         file_id=data.get("file_id"),

@@ -8,6 +8,7 @@ class TargetStates(StatesGroup):
 class BroadcastStates(StatesGroup):
     waiting_for_content = State()
     selecting_targets = State()
+    waiting_for_sender = State()
     waiting_for_repeat = State()
     waiting_for_interval = State()
     waiting_for_delay = State()

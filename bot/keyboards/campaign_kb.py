@@ -107,6 +107,22 @@ def get_schedule_options_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def get_sender_choice_keyboard(accounts: list) -> InlineKeyboardMarkup:
+    """أزرار اختيار جهة الإرسال (البوت أو حساب عادي متصل)"""
+    keyboard = [
+        [InlineKeyboardButton(text="🤖 البوت الرسمي (BotFather)", callback_data="sender_type_bot")]
+    ]
+    for acc in accounts:
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"👤 حساب: {acc.phone}",
+                callback_data=f"sender_type_acc_{acc.id}",
+            )
+        ])
+    keyboard.append([InlineKeyboardButton(text="❌ إلغاء", callback_data="menu_main")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
 def get_campaign_confirm_keyboard() -> InlineKeyboardMarkup:
     """أزرار التأكيد النهائي لإطلاق الحملة"""
     return InlineKeyboardMarkup(

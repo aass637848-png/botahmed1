@@ -19,15 +19,15 @@ router = Router(name="targets_router")
 
 @router.callback_query(F.data == "menu_targets")
 async def cb_list_targets(call: CallbackQuery, session: AsyncSession) -> None:
-    """عرض قائمة الأهداف للمستخدم"""
-    stmt = select(Target).where(Target.owner_id == call.from_user.id)
+    """عرض قائمة الأهداف المشتركة"""
+    stmt = select(Target).where(Target.is_active == True)
     res = await session.execute(stmt)
     targets = res.scalars().all()
 
     text = (
-        "🎯 <b>إدارة الأهداف (القنوات والمجموعات)</b>\n\n"
+        "🎯 <b>إدارة الأهداف المشتركة (القنوات والمجموعات)</b>\n\n"
         f"إجمالي الأهداف المسجلة: <b>{len(targets)}</b>\n\n"
-        "يمكنك إضافة أي قناة أو مجموعة بسهولة، والضغط على أي هدف لمعاينته أو حذفه:"
+        "💡 كافة الأهداف هنا مشتركة ويمكنك أنت وصديقك إطلاق الحملات إليها:"
     )
 
     await call.message.edit_text(
@@ -100,7 +100,7 @@ async def process_target_identifier(message: Message, state: FSMContext, bot: Bo
 async def cb_view_target(call: CallbackQuery, session: AsyncSession) -> None:
     """معاينة تفاصيل هدف محدد"""
     target_id = int(call.data.split("_")[2])
-    stmt = select(Target).where(Target.id == target_id, Target.owner_id == call.from_user.id)
+    stmt = select(Target).where(Target.id == target_id)
     res = await session.execute(stmt)
     target = res.scalar_one_or_none()
 
@@ -129,7 +129,7 @@ async def cb_view_target(call: CallbackQuery, session: AsyncSession) -> None:
 async def cb_recheck_target(call: CallbackQuery, bot: Bot, session: AsyncSession) -> None:
     """تحديث هدف محدد"""
     target_id = int(call.data.split("_")[2])
-    stmt = select(Target).where(Target.id == target_id, Target.owner_id == call.from_user.id)
+    stmt = select(Target).where(Target.id == target_id)
     res = await session.execute(stmt)
     target = res.scalar_one_or_none()
 
@@ -148,7 +148,7 @@ async def cb_recheck_target(call: CallbackQuery, bot: Bot, session: AsyncSession
 async def cb_delete_target(call: CallbackQuery, session: AsyncSession) -> None:
     """حذف هدف من قائمة المستخدم"""
     target_id = int(call.data.split("_")[2])
-    stmt = select(Target).where(Target.id == target_id, Target.owner_id == call.from_user.id)
+    stmt = select(Target).where(Target.id == target_id)
     res = await session.execute(stmt)
     target = res.scalar_one_or_none()
 

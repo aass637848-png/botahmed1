@@ -15,6 +15,8 @@ from bot.database.session import async_session_factory
 from bot.models.campaign import Campaign
 from bot.models.target import Target
 from bot.models.message_log import MessageLog
+from bot.models.account import Account
+from bot.services.userbot_service import send_via_userbot
 from bot.utils.notifier import (
     notify_campaign_started,
     notify_campaign_finished,
@@ -196,13 +198,28 @@ async def execute_campaign(bot: Bot, campaign_id: int) -> None:
                     if camp.status in ("cancelled", "paused"):
                         break
 
-                success, err_msg, retry_after = await send_single_message(
-                    bot=bot,
-                    chat_id=target.chat_id,
-                    content_type=campaign.content_type,
-                    text_content=campaign.text_content,
-                    file_id=campaign.file_id,
-                )
+                account_session_str = None
+                if campaign.sender_type == "userbot" and campaign.sender_account_id:
+                    async with async_session_factory() as session:
+                        acc = await session.get(Account, campaign.sender_account_id)
+                        if acc and acc.session_string:
+                            account_session_str = acc.session_string
+
+                if account_session_str:
+                    success, err_msg, retry_after = await send_via_userbot(
+                        session_str=account_session_str,
+                        target_identifier=target.chat_id,
+                        content_type=campaign.content_type,
+                        text_content=campaign.text_content,
+                    )
+                else:
+                    success, err_msg, retry_after = await send_single_message(
+                        bot=bot,
+                        chat_id=target.chat_id,
+                        content_type=campaign.content_type,
+                        text_content=campaign.text_content,
+                        file_id=campaign.file_id,
+                    )
 
                 if success:
                     total_success += 1

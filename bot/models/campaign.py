@@ -13,6 +13,8 @@ class Campaign(Base, TimestampMixin):
         BigInteger, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(255), default="حملة إرسال")
+    sender_type: Mapped[str] = mapped_column(String(32), default="bot")  # 'bot' or 'userbot'
+    sender_account_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     content_type: Mapped[str] = mapped_column(String(32), default="text")  # text, photo, video, document
     text_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
