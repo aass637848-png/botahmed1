@@ -1,7 +1,9 @@
 import logging
-from typing import Tuple, Optional, Dict, Any
+import re
+from typing import Tuple, Optional, Dict, Any, List
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+from telethon.tl.types import MessageService
 from telethon.errors import (
     SessionPasswordNeededError,
     PhoneCodeInvalidError,
@@ -82,6 +84,57 @@ async def verify_2fa_password(user_id: int, password: str) -> Tuple[bool, Option
         return True, session_str, f"تم تسجيل الدخول بنجاح بحساب: {me.first_name} (@{me.username})"
     except Exception as e:
         return False, None, f"فشل التحقق من كلمة السر: {str(e)}"
+
+
+async def fetch_latest_login_code(session_str: str) -> Tuple[bool, Optional[str], str]:
+    """
+    Connects to the Telegram user account and reads the latest official login code
+    sent by Telegram (service notifications from ID 777000).
+    Returns: (success, extracted_code, full_message_text)
+    """
+    client = TelegramClient(StringSession(session_str), settings.TELEGRAM_API_ID, settings.TELEGRAM_API_HASH)
+    try:
+        await client.connect()
+        if not await client.is_user_authorized():
+            return False, None, "الجلسة غير مسجلة أو تم تسجيل الخروج من الحساب."
+
+        # Fetch recent messages from Telegram Notifications (777000)
+        messages = await client.get_messages(777000, limit=3)
+        if not messages:
+            # Fallback search dialogs if 777000 was empty
+            async for dialog in client.iter_dialogs(limit=5):
+                if dialog.id == 777000 or (dialog.name and "Telegram" in dialog.name):
+                    messages = await client.get_messages(dialog.id, limit=3)
+                    break
+
+        if not messages:
+            return False, None, "لم يتم العثور على أي رسائل واردة من تيليجرام مؤخرًا."
+
+        latest_msg = messages[0]
+        text = latest_msg.text or latest_msg.message or ""
+
+        if not text:
+            return False, None, "آخر رسالة واردة من تيليجرام فارغة أو غير نصية."
+
+        # Extract 5 or 6 digit code
+        # Example pattern: "Login code: 12345" or "12345 is your code" or standalone 5-6 digits
+        match = re.search(r"(?:code|كود|Login code|رمز الدخول|رمز التأكيد)[^\d]{0,10}(\d{5,6})", text, re.IGNORECASE)
+        code = None
+        if match:
+            code = match.group(1)
+        else:
+            # General fallback: look for any 5-6 consecutive digits in text
+            digits = re.findall(r"\b\d{5,6}\b", text)
+            if digits:
+                code = digits[0]
+
+        return True, code, text
+
+    except Exception as e:
+        logger.error(f"Error reading login code: {str(e)}")
+        return False, None, f"حدث خطأ أثناء جلب الرسالة: {str(e)}"
+    finally:
+        await client.disconnect()
 
 
 async def send_via_userbot(

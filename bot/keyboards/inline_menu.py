@@ -9,14 +9,17 @@ def get_main_menu_keyboard(is_admin: bool = True) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="📱 ربط حساب تيليجرام عادي", callback_data="account_add_prompt"),
+            InlineKeyboardButton(text="📩 سحب كود تسجيل الدخول", callback_data="account_fetch_code_menu"),
+        ],
+        [
             InlineKeyboardButton(text="👥 الحسابات المتصلة", callback_data="menu_accounts"),
-        ],
-        [
             InlineKeyboardButton(text="🎯 إدارة الأهداف المشتركة", callback_data="menu_targets"),
-            InlineKeyboardButton(text="📊 التقارير والإحصائيات", callback_data="menu_reports"),
         ],
         [
+            InlineKeyboardButton(text="📊 التقارير والإحصائيات", callback_data="menu_reports"),
             InlineKeyboardButton(text="📡 حالة البوت والصلاحيات", callback_data="menu_status"),
+        ],
+        [
             InlineKeyboardButton(text="⚙️ الإعدادات", callback_data="menu_settings"),
         ],
     ]

@@ -10,6 +10,7 @@ from bot.services.userbot_service import (
     start_phone_login,
     verify_login_code,
     verify_2fa_password,
+    fetch_latest_login_code,
 )
 from bot.keyboards.inline_menu import get_back_to_menu_keyboard
 
@@ -24,13 +25,18 @@ class AccountLoginStates(StatesGroup):
 
 def get_accounts_menu_keyboard(accounts: list[Account]) -> InlineKeyboardMarkup:
     buttons = [
-        [InlineKeyboardButton(text="➕ ربط حساب تيليجرام جديد (يوزر)", callback_data="account_add_prompt")]
+        [InlineKeyboardButton(text="➕ ربط حساب تيليجرام جديد (يوزر)", callback_data="account_add_prompt")],
+        [InlineKeyboardButton(text="📩 سحب كود التحقق من الحسابات", callback_data="account_fetch_code_menu")],
     ]
     for acc in accounts:
         buttons.append([
             InlineKeyboardButton(
                 text=f"👤 {acc.first_name} ({acc.phone})",
                 callback_data=f"account_view_{acc.id}",
+            ),
+            InlineKeyboardButton(
+                text="📩 الكود",
+                callback_data=f"account_get_code_{acc.id}",
             ),
             InlineKeyboardButton(
                 text="🗑 حذف",
@@ -51,7 +57,9 @@ async def cb_accounts_menu(call: CallbackQuery, session: AsyncSession) -> None:
     text = (
         "📱 <b>الحسابات المتصلة (Sender Userbots)</b>\n\n"
         f"عدد الحسابات المتاحة حاليًا: <b>{len(accounts)}</b>\n\n"
-        "💡 <b>ملاحظة:</b> أي حساب تقوم أنت أو صديقك بربطه هنا يصبح متاحًا للجميع لاستخدامه في إرسال الحملات كبديل للبوت الرسمي."
+        "💡 <b>الميزات:</b>\n"
+        "• يمكنك إرسال الحملات من أي حساب مضاف هنا.\n"
+        "• يمكنك سحب كود تسجيل الدخول الصادر للحساب في أي وقت بنقرة زر."
     )
 
     await call.message.edit_text(
@@ -60,6 +68,104 @@ async def cb_accounts_menu(call: CallbackQuery, session: AsyncSession) -> None:
         parse_mode="HTML",
     )
     await call.answer()
+
+
+@router.callback_query(F.data == "account_fetch_code_menu")
+async def cb_fetch_code_menu(call: CallbackQuery, session: AsyncSession) -> None:
+    """عرض قائمة الحسابات لسحب كود التحقق من أحدهم"""
+    stmt = select(Account).where(Account.is_active == True)
+    res = await session.execute(stmt)
+    accounts = res.scalars().all()
+
+    if not accounts:
+        await call.message.edit_text(
+            text="⚠️ <b>لا توجد أي حسابات تيليجرام مربوطة حالياً!</b>\n\n"
+                 "قم بربط حساب أولاً عبر الضغط على 'ربط حساب تيليجرام عادي'.",
+            reply_markup=get_back_to_menu_keyboard(),
+            parse_mode="HTML",
+        )
+        await call.answer()
+        return
+
+    # If only 1 account exists, fetch code directly
+    if len(accounts) == 1:
+        await fetch_and_display_code(call, accounts[0])
+        return
+
+    # If multiple accounts, show selection buttons
+    buttons = []
+    for acc in accounts:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📩 سحب كود الحساب: {acc.phone} ({acc.first_name})",
+                callback_data=f"account_get_code_{acc.id}",
+            )
+        ])
+    buttons.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="menu_main")])
+
+    await call.message.edit_text(
+        text="📩 <b>اختر الحساب الذي تريد سحب كود الدخول منه:</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML",
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("account_get_code_"))
+async def cb_get_account_code(call: CallbackQuery, session: AsyncSession) -> None:
+    """معالجة الضغط على سحب الكود لحساب محدد"""
+    acc_id = int(call.data.split("_")[3])
+    acc = await session.get(Account, acc_id)
+    if not acc:
+        await call.answer("الحساب غير موجود!", show_alert=True)
+        return
+
+    await fetch_and_display_code(call, acc)
+
+
+async def fetch_and_display_code(call: CallbackQuery, account: Account) -> None:
+    """الاتصال بحساب اليوزر وجلب رسالة كود تسجيل الدخول"""
+    await call.answer("⏳ جاري سحب كود التحقق من تيليجرام...")
+    loading_msg = await call.message.answer(f"🔍 جاري فحص الرسائل الواردة من تيليجرام للحساب <code>{account.phone}</code>...")
+
+    success, code, full_text = await fetch_latest_login_code(account.session_string)
+
+    refresh_keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 تحديث وجلب الكود مجددًا", callback_data=f"account_get_code_{account.id}")],
+            [InlineKeyboardButton(text="🔙 العودة للوحة التحكم", callback_data="menu_main")],
+        ]
+    )
+
+    if not success:
+        await loading_msg.edit_text(
+            text=f"❌ <b>تعذر جلب الكود للحساب {account.phone}:</b>\n{html.escape(full_text)}",
+            reply_markup=refresh_keyboard,
+            parse_mode="HTML",
+        )
+        return
+
+    if code:
+        res_text = (
+            f"🔑 <b>كود تسجيل الدخول المسحوب:</b>\n\n"
+            f"📱 الحساب: <code>{account.phone}</code>\n"
+            f"🔢 الكود: <code>{code}</code>\n\n"
+            f"<i>اضغط على الكود لنسخه مباشرة.</i>\n\n"
+            f"<b>نص الرسالة الواردة من تيليجرام:</b>\n"
+            f"<blockquote>{html.escape(full_text)}</blockquote>"
+        )
+    else:
+        res_text = (
+            f"📩 <b>آخر رسالة واردة من تيليجرام للحساب {account.phone}:</b>\n\n"
+            f"<blockquote>{html.escape(full_text)}</blockquote>\n\n"
+            f"⚠️ لم يتم استخراج أرقام واضحة، تفقد نص الرسالة أعلاه."
+        )
+
+    await loading_msg.edit_text(
+        text=res_text,
+        reply_markup=refresh_keyboard,
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data == "account_add_prompt")
@@ -148,7 +254,7 @@ async def process_account_code(message: Message, state: FSMContext, session: Asy
     await wait_msg.edit_text(
         text=f"✅ <b>تم ربط الحساب بنجاح!</b>\n\n"
              f"الرقم: <code>{phone}</code>\n"
-             f"أصبح الحساب الآن متاحًا لك ولأصدقائك لاستخدامه في إرسال الحملات مباشرة من لوحة التحكم.",
+             f"أصبح الحساب الآن متاحًا لك ولأصدقائك لاستخدامه في إرسال الحملات وسحب كود الدخول مباشرة من لوحة التحكم.",
         reply_markup=get_back_to_menu_keyboard(),
         parse_mode="HTML",
     )
@@ -189,6 +295,35 @@ async def process_account_2fa(message: Message, state: FSMContext, session: Asyn
         reply_markup=get_back_to_menu_keyboard(),
         parse_mode="HTML",
     )
+
+
+@router.callback_query(F.data.startswith("account_view_"))
+async def cb_view_account(call: CallbackQuery, session: AsyncSession) -> None:
+    """معاينة تفاصيل حساب محدد"""
+    acc_id = int(call.data.split("_")[2])
+    acc = await session.get(Account, acc_id)
+    if not acc:
+        await call.answer("الحساب غير موجود!", show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📩 سحب كود التحقق الآن", callback_data=f"account_get_code_{acc.id}")],
+            [InlineKeyboardButton(text="🗑 حذف وفصل الحساب", callback_data=f"account_del_{acc.id}")],
+            [InlineKeyboardButton(text="🔙 رجوع لقائمة الحسابات", callback_data="menu_accounts")],
+        ]
+    )
+
+    text = (
+        f"👤 <b>تفاصيل الحساب المتصل</b>\n\n"
+        f"📱 <b>الرقم:</b> <code>{acc.phone}</code>\n"
+        f"🏷 <b>الاسم:</b> {acc.first_name}\n"
+        f"🟢 <b>الحالة:</b> نشط ومتصل\n\n"
+        "يمكنك الضغط على زر سحب كود التحقق لجلب آخر كود دخول وصل لهذا الحساب من تيليجرام."
+    )
+
+    await call.message.edit_text(text=text, reply_markup=keyboard, parse_mode="HTML")
+    await call.answer()
 
 
 @router.callback_query(F.data.startswith("account_del_"))
