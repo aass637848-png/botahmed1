@@ -79,3 +79,40 @@ async def test_campaign_and_logs(test_session: AsyncSession):
 
     assert len(logs) == 1
     assert logs[0].status == "success"
+
+
+@pytest.mark.asyncio
+async def test_account_creation_and_upsert(test_session: AsyncSession):
+    from bot.models.account import Account
+
+    # 1. Create Account
+    acc = Account(
+        phone="+201012345678",
+        session_string="test_session_str",
+        first_name="Ahmed",
+        username="ahmed_tg",
+        user_id=11223344,
+        added_by=999,
+        is_active=True,
+    )
+    test_session.add(acc)
+    await test_session.commit()
+
+    # 2. Query and verify
+    stmt = select(Account).where(Account.phone == "+201012345678")
+    res = await test_session.execute(stmt)
+    found = res.scalar_one_or_none()
+    assert found is not None
+    assert found.first_name == "Ahmed"
+
+    # 3. Simulate Upsert (Update existing record)
+    found.session_string = "new_session_str_updated"
+    found.first_name = "Ahmed Updated"
+    await test_session.commit()
+
+    res2 = await test_session.execute(stmt)
+    updated = res2.scalar_one_or_none()
+    assert updated is not None
+    assert updated.session_string == "new_session_str_updated"
+    assert updated.first_name == "Ahmed Updated"
+

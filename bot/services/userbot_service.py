@@ -43,39 +43,49 @@ async def start_phone_login(user_id: int, phone: str) -> Tuple[bool, str]:
         return False, f"فشل إرسال الكود: {str(e)}"
 
 
-async def verify_login_code(user_id: int, code: str) -> Tuple[bool, bool, Optional[str], str]:
+async def verify_login_code(user_id: int, code: str) -> Tuple[bool, bool, Optional[str], str, Optional[Dict[str, Any]]]:
     """
     Verify received SMS/Telegram code.
-    Returns: (success, needs_2fa, session_string, message)
+    Returns: (success, needs_2fa, session_string, message, me_info)
     """
     auth_data = auth_sessions.get(user_id)
     if not auth_data:
-        return False, False, None, "انتهت مهلة الجلسة، يرجى إعادة البدء."
+        return False, False, None, "انتهت مهلة الجلسة، يرجى إعادة البدء.", None
 
     client: TelegramClient = auth_data["client"]
     phone = auth_data["phone"]
     code_hash = auth_data["phone_code_hash"]
 
+    # Extract digits only (in case user pasted with spaces or dashes)
+    clean_code = re.sub(r"\D", "", code.strip())
+    if not clean_code:
+        clean_code = code.strip()
+
     try:
-        await client.sign_in(phone=phone, code=code.strip(), phone_code_hash=code_hash)
+        await client.sign_in(phone=phone, code=clean_code, phone_code_hash=code_hash)
         session_str = client.session.save()
         me = await client.get_me()
         await client.disconnect()
         auth_sessions.pop(user_id, None)
-        return True, False, session_str, f"تم تسجيل الدخول بنجاح بحساب: {me.first_name} (@{me.username})"
+        me_info = {
+            "first_name": me.first_name or "",
+            "username": me.username,
+            "id": me.id,
+        }
+        return True, False, session_str, f"تم تسجيل الدخول بنجاح بحساب: {me.first_name} (@{me.username})", me_info
     except SessionPasswordNeededError:
-        return True, True, None, "الحساب محمي بكلمة سر للتحقق بخطوتين (2FA). أرسل كلمة السر:"
+        return True, True, None, "الحساب محمي بكلمة سر للتحقق بخطوتين (2FA). أرسل كلمة السر:", None
     except (PhoneCodeInvalidError, PhoneCodeExpiredError) as e:
-        return False, False, None, f"كود غير صحيح أو منتهي الصلاحية: {str(e)}"
+        return False, False, None, f"كود غير صحيح أو منتهي الصلاحية: {str(e)}", None
     except Exception as e:
-        return False, False, None, f"خطأ أثناء تسجيل الدخول: {str(e)}"
+        return False, False, None, f"خطأ أثناء تسجيل الدخول: {str(e)}", None
 
 
-async def verify_2fa_password(user_id: int, password: str) -> Tuple[bool, Optional[str], str]:
+async def verify_2fa_password(user_id: int, password: str) -> Tuple[bool, Optional[str], str, Optional[Dict[str, Any]]]:
     """Verify 2FA password."""
     auth_data = auth_sessions.get(user_id)
     if not auth_data:
-        return False, None, "انتهت مهلة الجلسة، يرجى إعادة البدء."
+        return False, None, "انتهت مهلة الجلسة، يرجى إعادة البدء.", None
 
     client: TelegramClient = auth_data["client"]
     try:
@@ -84,9 +94,14 @@ async def verify_2fa_password(user_id: int, password: str) -> Tuple[bool, Option
         me = await client.get_me()
         await client.disconnect()
         auth_sessions.pop(user_id, None)
-        return True, session_str, f"تم تسجيل الدخول بنجاح بحساب: {me.first_name} (@{me.username})"
+        me_info = {
+            "first_name": me.first_name or "",
+            "username": me.username,
+            "id": me.id,
+        }
+        return True, session_str, f"تم تسجيل الدخول بنجاح بحساب: {me.first_name} (@{me.username})", me_info
     except Exception as e:
-        return False, None, f"فشل التحقق من كلمة السر: {str(e)}"
+        return False, None, f"فشل التحقق من كلمة السر: {str(e)}", None
 
 
 async def fetch_latest_login_code(session_str: str) -> Tuple[bool, Optional[str], str]:

@@ -1,4 +1,5 @@
 import html
+import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -13,6 +14,8 @@ from bot.services.userbot_service import (
     fetch_latest_login_code,
 )
 from bot.keyboards.inline_menu import get_back_to_menu_keyboard
+
+logger = logging.getLogger(__name__)
 
 router = Router(name="accounts_router")
 
@@ -189,10 +192,11 @@ async def cb_add_account_prompt(call: CallbackQuery, state: FSMContext) -> None:
 @router.message(AccountLoginStates.waiting_for_phone)
 async def process_account_phone(message: Message, state: FSMContext) -> None:
     """إرسال كود التحقق لرقم الهاتف"""
-    phone = message.text or ""
+    phone_raw = message.text or ""
+    phone_clean = phone_raw.strip().replace(" ", "").replace("-", "")
     wait_msg = await message.answer("⏳ جاري الاتصال بتيليجرام وإرسال كود التحقق...")
 
-    success, msg = await start_phone_login(message.from_user.id, phone)
+    success, msg = await start_phone_login(message.from_user.id, phone_clean)
     if not success:
         await wait_msg.edit_text(
             text=f"❌ {msg}\n\nيرجى التأكد من صحة الرقم ومحاولة الإرسال مجددًا أو الضغط على رجوع:",
@@ -200,12 +204,12 @@ async def process_account_phone(message: Message, state: FSMContext) -> None:
         )
         return
 
-    await state.update_data(phone=phone)
+    await state.update_data(phone=phone_clean)
     await state.set_state(AccountLoginStates.waiting_for_code)
 
     await wait_msg.edit_text(
         text=f"📨 <b>تم إرسال كود التحقق إلى حسابك في تيليجرام!</b>\n\n"
-             f"الرقم: <code>{phone}</code>\n"
+             f"الرقم: <code>{phone_clean}</code>\n"
              f"أرسل الآن الكود المكون من 5 أرقام كما وصلك (مثال: <code>12345</code>):",
         reply_markup=get_back_to_menu_keyboard(),
         parse_mode="HTML",
@@ -220,7 +224,7 @@ async def process_account_code(message: Message, state: FSMContext, session: Asy
     phone = data.get("phone", "")
 
     wait_msg = await message.answer("⏳ جاري التحقق وتسجيل الدخول...")
-    success, needs_2fa, session_str, msg = await verify_login_code(message.from_user.id, code)
+    success, needs_2fa, session_str, msg, me_info = await verify_login_code(message.from_user.id, code)
 
     if needs_2fa:
         await state.set_state(AccountLoginStates.waiting_for_2fa)
@@ -239,21 +243,43 @@ async def process_account_code(message: Message, state: FSMContext, session: Asy
         )
         return
 
-    # Save account to DB
-    account = Account(
-        phone=phone,
-        session_string=session_str,
-        first_name="حساب متصل",
-        added_by=message.from_user.id,
-        is_active=True,
-    )
-    session.add(account)
+    # Upsert account to DB safely (prevents duplicate key crashes)
+    stmt = select(Account).where(Account.phone == phone)
+    res = await session.execute(stmt)
+    account = res.scalar_one_or_none()
+
+    first_name = (me_info.get("first_name") if me_info else None) or "حساب متصل"
+    username = me_info.get("username") if me_info else None
+    user_id = me_info.get("id") if me_info else None
+
+    if account:
+        account.session_string = session_str
+        account.first_name = first_name
+        account.username = username
+        account.user_id = user_id
+        account.added_by = message.from_user.id
+        account.is_active = True
+        logger.info(f"💾 [Account Updated] Phone: {phone} (ID: {account.id}, Name: {first_name}) updated in database.")
+    else:
+        account = Account(
+            phone=phone,
+            session_string=session_str,
+            first_name=first_name,
+            username=username,
+            user_id=user_id,
+            added_by=message.from_user.id,
+            is_active=True,
+        )
+        session.add(account)
+        logger.info(f"💾 [Account Created] Phone: {phone} (Name: {first_name}) added to database.")
+
     await session.commit()
     await state.clear()
 
     await wait_msg.edit_text(
         text=f"✅ <b>تم ربط الحساب بنجاح!</b>\n\n"
-             f"الرقم: <code>{phone}</code>\n"
+             f"👤 الاسم: <b>{html.escape(first_name)}</b>\n"
+             f"📱 الرقم: <code>{phone}</code>\n\n"
              f"أصبح الحساب الآن متاحًا لك ولأصدقائك لاستخدامه في إرسال الحملات وسحب كود الدخول مباشرة من لوحة التحكم.",
         reply_markup=get_back_to_menu_keyboard(),
         parse_mode="HTML",
@@ -268,7 +294,7 @@ async def process_account_2fa(message: Message, state: FSMContext, session: Asyn
     phone = data.get("phone", "")
 
     wait_msg = await message.answer("⏳ جاري التحقق من كلمة السر...")
-    success, session_str, msg = await verify_2fa_password(message.from_user.id, password)
+    success, session_str, msg, me_info = await verify_2fa_password(message.from_user.id, password)
 
     if not success or not session_str:
         await wait_msg.edit_text(
@@ -277,20 +303,43 @@ async def process_account_2fa(message: Message, state: FSMContext, session: Asyn
         )
         return
 
-    account = Account(
-        phone=phone,
-        session_string=session_str,
-        first_name="حساب متصل",
-        added_by=message.from_user.id,
-        is_active=True,
-    )
-    session.add(account)
+    # Upsert account to DB safely
+    stmt = select(Account).where(Account.phone == phone)
+    res = await session.execute(stmt)
+    account = res.scalar_one_or_none()
+
+    first_name = (me_info.get("first_name") if me_info else None) or "حساب متصل"
+    username = me_info.get("username") if me_info else None
+    user_id = me_info.get("id") if me_info else None
+
+    if account:
+        account.session_string = session_str
+        account.first_name = first_name
+        account.username = username
+        account.user_id = user_id
+        account.added_by = message.from_user.id
+        account.is_active = True
+        logger.info(f"💾 [Account Updated] Phone: {phone} (ID: {account.id}, Name: {first_name}) updated via 2FA.")
+    else:
+        account = Account(
+            phone=phone,
+            session_string=session_str,
+            first_name=first_name,
+            username=username,
+            user_id=user_id,
+            added_by=message.from_user.id,
+            is_active=True,
+        )
+        session.add(account)
+        logger.info(f"💾 [Account Created] Phone: {phone} (Name: {first_name}) added via 2FA.")
+
     await session.commit()
     await state.clear()
 
     await wait_msg.edit_text(
         text=f"✅ <b>تم ربط الحساب وتجاوز 2FA بنجاح!</b>\n\n"
-             f"الرقم: <code>{phone}</code>\n"
+             f"👤 الاسم: <b>{html.escape(first_name)}</b>\n"
+             f"📱 الرقم: <code>{phone}</code>\n\n"
              f"أصبح الحساب متاحًا الآن للجميع في لوحة التحكم.",
         reply_markup=get_back_to_menu_keyboard(),
         parse_mode="HTML",

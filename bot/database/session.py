@@ -10,7 +10,7 @@ from bot.database.base import Base
 
 # Create Async Engine
 engine: AsyncEngine = create_async_engine(
-    settings.DATABASE_URL,
+    settings.async_database_url,
     echo=False,
     future=True,
 )
