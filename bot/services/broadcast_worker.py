@@ -1,7 +1,8 @@
 import asyncio
+import io
 import logging
 from datetime import datetime
-from typing import Set, Dict, Any, List, Tuple
+from typing import Set, Dict, Any, List, Tuple, Optional
 from aiogram import Bot
 from aiogram.exceptions import (
     TelegramRetryAfter,
@@ -174,6 +175,19 @@ async def execute_campaign(bot: Bot, campaign_id: int) -> None:
     total_failed = 0
     last_err_msg = None
 
+    # Pre-download media file into memory buffer if broadcasting via userbot
+    cached_media_bytes: Optional[bytes] = None
+    if campaign.sender_type == "userbot" and campaign.file_id:
+        try:
+            logger.info(f"📥 [Campaign #{campaign.id}] Downloading media file ({campaign.content_type}) for userbot...")
+            media_buf = io.BytesIO()
+            await bot.download(campaign.file_id, destination=media_buf)
+            media_buf.seek(0)
+            cached_media_bytes = media_buf.getvalue()
+            logger.info(f"📥 [Campaign #{campaign.id}] Media file downloaded successfully ({len(cached_media_bytes)} bytes).")
+        except Exception as dl_err:
+            logger.error(f"❌ [Campaign #{campaign.id}] Failed to download media file: {str(dl_err)}")
+
     try:
         for iteration in range(1, campaign.repeat_count + 1):
             async with async_session_factory() as session:
@@ -217,11 +231,22 @@ async def execute_campaign(bot: Bot, campaign_id: int) -> None:
                 )
 
                 if account_session_str:
+                    media_payload = None
+                    if cached_media_bytes:
+                        media_payload = io.BytesIO(cached_media_bytes)
+                        if campaign.content_type == "photo":
+                            media_payload.name = "photo.jpg"
+                        elif campaign.content_type == "video":
+                            media_payload.name = "video.mp4"
+                        else:
+                            media_payload.name = "document.dat"
+
                     success, err_msg, retry_after = await send_via_userbot(
                         session_str=account_session_str,
                         target_identifier=dest,
                         content_type=campaign.content_type,
                         text_content=campaign.text_content,
+                        file_path_or_bytes=media_payload,
                     )
                 else:
                     success, err_msg, retry_after = await send_single_message(

@@ -211,16 +211,39 @@ async def send_via_userbot(
         # 1. Automatically join the channel/group first if not joined!
         await auto_join_target(client, target_identifier)
 
-        # 2. Resolve entity (chat or username)
+        # 2. Resolve entity (chat or username) with cache warming
+        entity = None
         try:
             entity = await client.get_entity(target_identifier)
         except Exception:
-            entity = await client.get_input_entity(target_identifier)
+            try:
+                # Load recent dialogs into memory cache to resolve channel/group IDs
+                await client.get_dialogs(limit=50)
+                entity = await client.get_entity(target_identifier)
+            except Exception:
+                try:
+                    entity = await client.get_input_entity(target_identifier)
+                except Exception:
+                    try:
+                        # Try stripped integer channel ID if prefixed with -100
+                        raw_str = str(target_identifier).strip()
+                        if raw_str.startswith("-100"):
+                            clean_id = int(raw_str[4:])
+                            entity = await client.get_entity(clean_id)
+                    except Exception as e:
+                        logger.error(f"Entity resolution failed for {target_identifier}: {str(e)}")
+                        return False, f"تعذر التعرف على الوجهة ({str(e)})", None
 
-        if content_type == "text" or not file_path_or_bytes:
-            await client.send_message(entity, text_content or "")
+        if not entity:
+            return False, f"تعذر إيجاد القناة أو المجموعة: {target_identifier}", None
+
+        # 3. Send file/photo or text message
+        if file_path_or_bytes:
+            await client.send_file(entity, file_path_or_bytes, caption=text_content or None)
         else:
-            await client.send_file(entity, file_path_or_bytes, caption=text_content)
+            if not text_content or not text_content.strip():
+                return False, "لا يمكن إرسال رسالة نصية فارغة بدون محتوى أو وسائط.", None
+            await client.send_message(entity, text_content)
 
         return True, None, None
 
