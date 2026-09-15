@@ -19,13 +19,20 @@ from bot.services.scheduler_service import (
 
 def setup_logging() -> None:
     """Configure application logging."""
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s | %(levelname)-8s | %(name)s : %(message)s",
+        format="%(asctime)s | %(levelname)-8s | [%(name)s] %(message)s",
         handlers=[
             logging.StreamHandler(sys.stdout),
         ],
     )
+    logging.getLogger("telethon").setLevel(logging.INFO)
+    logging.getLogger("aiogram").setLevel(logging.INFO)
 
 
 async def main() -> None:

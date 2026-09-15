@@ -211,6 +211,11 @@ async def execute_campaign(bot: Bot, campaign_id: int) -> None:
                         if acc and acc.session_string:
                             account_session_str = acc.session_string
 
+                logger.info(
+                    f"📤 [Campaign #{campaign.id}] [Cycle {iteration}/{campaign.repeat_count}] "
+                    f"Sending to target '{dest}' (Title: '{target.title}') via {campaign.sender_type}..."
+                )
+
                 if account_session_str:
                     success, err_msg, retry_after = await send_via_userbot(
                         session_str=account_session_str,
@@ -229,9 +234,11 @@ async def execute_campaign(bot: Bot, campaign_id: int) -> None:
 
                 if success:
                     total_success += 1
+                    logger.info(f"✅ [Campaign #{campaign.id}] Successfully sent to '{dest}'!")
                 else:
                     total_failed += 1
                     last_err_msg = err_msg
+                    logger.error(f"❌ [Campaign #{campaign.id}] FAILED to send to '{dest}': {err_msg}")
 
                 # Log result
                 async with async_session_factory() as session:
@@ -251,6 +258,7 @@ async def execute_campaign(bot: Bot, campaign_id: int) -> None:
 
                 # Delay between targets
                 if campaign.delay_between_targets > 0:
+                    logger.info(f"⏳ [Campaign #{campaign.id}] Waiting {campaign.delay_between_targets}s...")
                     await asyncio.sleep(campaign.delay_between_targets)
 
             # Check if we need to pause/sleep before next iteration

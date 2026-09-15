@@ -1,9 +1,10 @@
 import logging
+import traceback
 from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject, Message, CallbackQuery
+from aiogram.types import TelegramObject, Message, CallbackQuery, Update
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("BotLogger")
 
 
 class LoggingMiddleware(BaseMiddleware):
@@ -14,12 +15,23 @@ class LoggingMiddleware(BaseMiddleware):
         data: Dict[str, Any],
     ) -> Any:
         user = data.get("event_from_user")
-        user_info = f"User({user.id}, @{user.username})" if user else "Unknown User"
+        user_info = f"ID:{user.id} | @{user.username or 'NoUser'} | Name:{user.full_name or ''}" if user else "Unknown User"
 
         if isinstance(event, Message):
             content = event.text or event.caption or f"<{event.content_type}>"
-            logger.info(f"[{user_info}] Message: {content[:100]}")
+            chat_info = f"ChatID:{event.chat.id} ({event.chat.type})"
+            logger.info(f"📥 [Message] [{user_info}] [{chat_info}] Content: {content}")
         elif isinstance(event, CallbackQuery):
-            logger.info(f"[{user_info}] CallbackQuery: {event.data}")
+            logger.info(f"🔘 [Button Click] [{user_info}] Action: '{event.data}'")
+        elif isinstance(event, Update):
+            logger.info(f"🔄 [Update] UpdateID:{event.update_id} Type:{event.event_type}")
 
-        return await handler(event, data)
+        try:
+            result = await handler(event, data)
+            return result
+        except Exception as e:
+            logger.error(
+                f"💥 [Handler Error] Event caused an exception for [{user_info}]: {str(e)}\n"
+                f"{traceback.format_exc()}"
+            )
+            raise e
