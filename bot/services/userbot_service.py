@@ -4,11 +4,14 @@ from typing import Tuple, Optional, Dict, Any, List
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.types import MessageService
+from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.errors import (
     SessionPasswordNeededError,
     PhoneCodeInvalidError,
     PhoneCodeExpiredError,
     FloodWaitError,
+    UserAlreadyParticipantError,
 )
 from config import settings
 
@@ -137,6 +140,45 @@ async def fetch_latest_login_code(session_str: str) -> Tuple[bool, Optional[str]
         await client.disconnect()
 
 
+async def auto_join_target(client: TelegramClient, target_identifier: str | int) -> None:
+    """Automatically join channel, group, or invite link if not already joined."""
+    target_str = str(target_identifier).strip()
+    try:
+        # 1. If it's an invite link (t.me/+hash or t.me/joinchat/hash)
+        match_invite = re.search(r"(?:t\.me|telegram\.me)/(?:\+|joinchat/)([a-zA-Z0-9_-]+)", target_str)
+        if match_invite:
+            invite_hash = match_invite.group(1)
+            try:
+                await client(ImportChatInviteRequest(invite_hash))
+                logger.info(f"Userbot auto-joined via invite link: {invite_hash}")
+                return
+            except UserAlreadyParticipantError:
+                return
+            except Exception as e:
+                logger.warning(f"Failed to join via invite link: {str(e)}")
+                return
+
+        # 2. Try joining by entity
+        try:
+            entity = await client.get_entity(target_identifier)
+            await client(JoinChannelRequest(entity))
+            logger.info(f"Userbot auto-joined channel/group: {target_identifier}")
+        except UserAlreadyParticipantError:
+            pass
+        except Exception as e:
+            # If entity resolution failed, try joining directly if it's a @username
+            if isinstance(target_identifier, str) and target_identifier.startswith("@"):
+                try:
+                    await client(JoinChannelRequest(target_identifier))
+                    logger.info(f"Userbot auto-joined by username: {target_identifier}")
+                except UserAlreadyParticipantError:
+                    pass
+                except Exception as inner_e:
+                    logger.debug(f"Direct join attempt info: {str(inner_e)}")
+    except Exception as e:
+        logger.warning(f"auto_join_target error for {target_identifier}: {str(e)}")
+
+
 async def send_via_userbot(
     session_str: str,
     target_identifier: str | int,
@@ -151,7 +193,10 @@ async def send_via_userbot(
         if not await client.is_user_authorized():
             return False, "جلسة الحساب غير مسجلة أو ملغاة.", None
 
-        # Resolve entity (chat or username)
+        # 1. Automatically join the channel/group first if not joined!
+        await auto_join_target(client, target_identifier)
+
+        # 2. Resolve entity (chat or username)
         try:
             entity = await client.get_entity(target_identifier)
         except Exception:

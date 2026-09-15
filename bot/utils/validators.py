@@ -5,9 +5,14 @@ import pytz
 
 
 def clean_target_identifier(raw_input: str) -> str:
-    """Clean and standardize a chat identifier or username."""
+    """Clean and standardize a chat identifier, username, or invite link."""
     text = raw_input.strip()
-    # If user pasted a telegram link like t.me/channel_name or https://t.me/channel_name
+    # Check if invite link like t.me/+hash or t.me/joinchat/hash
+    match_invite = re.search(r"(?:https?://)?(?:t\.me|telegram\.me)/(?:\+|joinchat/)([a-zA-Z0-9_-]+)/?", text)
+    if match_invite:
+        return f"https://t.me/+{match_invite.group(1)}"
+
+    # If user pasted a public telegram link like t.me/channel_name
     match_link = re.search(r"(?:https?://)?(?:t\.me|telegram\.me)/([a-zA-Z0-9_]{4,32})/?", text)
     if match_link:
         return f"@{match_link.group(1)}"
@@ -21,10 +26,15 @@ def validate_target_identifier(raw_input: str) -> Tuple[bool, Optional[str], Opt
     Supports:
     - Numeric chat_id: e.g. -1001234567890 or 12345678
     - Username: e.g. @channel_username
+    - Invite links: https://t.me/+xxxx or https://t.me/joinchat/xxxx
     """
     cleaned = clean_target_identifier(raw_input)
     if not cleaned:
         return False, None, "المعرف فارغ، يرجى إدخال @username أو chat_id."
+
+    # Check invite links
+    if cleaned.startswith("https://t.me/+"):
+        return True, cleaned, None
 
     # Check numeric chat_id
     if re.fullmatch(r"-?\d{5,20}", cleaned):
@@ -41,7 +51,7 @@ def validate_target_identifier(raw_input: str) -> Tuple[bool, Optional[str], Opt
     return (
         False,
         None,
-        "معرف غير صالح. يرجى إدخال اسم مستخدم يبدأ بـ @ (مثل @my_channel) أو معرف رقمي (مثل -100123456789).",
+        "معرف غير صالح. يرجى إدخال اسم مستخدم يبدأ بـ @ (مثل @my_channel) أو معرف رقمي أو رابط دعوة.",
     )
 
 

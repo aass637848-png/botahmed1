@@ -32,6 +32,11 @@ def test_validate_target_identifier_valid():
     assert is_valid is True
     assert cleaned == "-1001987654321"
 
+    # Invite links
+    is_valid, cleaned, err = validate_target_identifier("https://t.me/+AbCdEf123")
+    assert is_valid is True
+    assert cleaned == "https://t.me/+AbCdEf123"
+
 
 def test_validate_target_identifier_invalid():
     is_valid, cleaned, err = validate_target_identifier("")
