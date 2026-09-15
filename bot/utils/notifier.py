@@ -22,16 +22,26 @@ async def notify_campaign_finished(
     success_count: int,
     failed_count: int,
     duration_str: str,
+    last_error: str | None = None,
 ) -> None:
-    text = (
-        f"🏁 <b>اكتملت حملة الإرسال رقم #{campaign_id} بنجاح!</b>\n\n"
-        f"✅ الرسائل الناجحة: <b>{success_count}</b>\n"
-        f"❌ الرسائل الفاشلة: <b>{failed_count}</b>\n"
-        f"⏱ مدة التنفيذ: <b>{duration_str}</b>\n\n"
-        f"📊 يمكنك مراجعة وتصدير تقرير الحملة بصيغة CSV من قسم التقارير."
-    )
+    lines = [
+        f"🏁 <b>اكتملت حملة الإرسال رقم #{campaign_id}!</b>\n",
+        f"✅ الرسائل الناجحة: <b>{success_count}</b>",
+        f"❌ الرسائل الفاشلة: <b>{failed_count}</b>",
+        f"⏱ مدة التنفيذ: <b>{duration_str}</b>\n",
+    ]
+
+    if failed_count > 0 and last_error:
+        lines.append(
+            f"⚠️ <b>سبب فشل الإرسال من تيليجرام:</b>\n"
+            f"<code>{html.escape(last_error)}</code>\n\n"
+            f"💡 <i>نصيحة: تأكد من إضافة البوت أو الحساب في الجروب ومنحه صلاحية إرسال الرسائل.</i>"
+        )
+    else:
+        lines.append("📊 يمكنك مراجعة وتصدير تقرير الحملة بصيغة CSV من قسم التقارير.")
+
     try:
-        await bot.send_message(chat_id=user_id, text=text, parse_mode="HTML")
+        await bot.send_message(chat_id=user_id, text="\n".join(lines), parse_mode="HTML")
     except Exception:
         pass
 

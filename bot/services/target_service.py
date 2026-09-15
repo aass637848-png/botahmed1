@@ -20,7 +20,11 @@ async def inspect_target(bot: Bot, identifier: str) -> Tuple[bool, Dict[str, Any
 
     # Check if identifier is numeric
     if re.fullmatch(r"-?\d+", identifier):
-        chat_id = int(identifier)
+        val = int(identifier)
+        # If user forgot negative sign for supergroup
+        if val > 0 and len(str(val)) >= 9:
+            val = -val
+        chat_id = val
     elif identifier.startswith("@"):
         username = identifier
 
@@ -32,14 +36,9 @@ async def inspect_target(bot: Bot, identifier: str) -> Tuple[bool, Dict[str, Any
         chat_type = chat.type
     except Exception as e:
         logger.warning(f"Could not fetch full chat info for {identifier}: {str(e)}")
-        # If numeric, keep it; if not numeric, we can still use fallback
-        if chat_id is None:
-            # If username, we can attempt to store it
-            pass
 
     if chat_id is None:
-        # Generate dummy or hash if pure username and get_chat failed
-        chat_id = hash(identifier)
+        chat_id = 0
 
     info = {
         "chat_id": chat_id,

@@ -152,7 +152,10 @@ async def send_via_userbot(
             return False, "جلسة الحساب غير مسجلة أو ملغاة.", None
 
         # Resolve entity (chat or username)
-        entity = await client.get_input_entity(target_identifier)
+        try:
+            entity = await client.get_entity(target_identifier)
+        except Exception:
+            entity = await client.get_input_entity(target_identifier)
 
         if content_type == "text" or not file_path_or_bytes:
             await client.send_message(entity, text_content or "")

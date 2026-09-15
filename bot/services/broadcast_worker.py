@@ -59,7 +59,7 @@ async def release_target_locks(target_chat_ids: List[int]) -> None:
 
 async def send_single_message(
     bot: Bot,
-    chat_id: int,
+    chat_id: int | str,
     content_type: str,
     text_content: str | None,
     file_id: str | None,
@@ -172,6 +172,7 @@ async def execute_campaign(bot: Bot, campaign_id: int) -> None:
 
     total_success = 0
     total_failed = 0
+    last_err_msg = None
 
     try:
         for iteration in range(1, campaign.repeat_count + 1):
@@ -198,6 +199,11 @@ async def execute_campaign(bot: Bot, campaign_id: int) -> None:
                     if camp.status in ("cancelled", "paused"):
                         break
 
+                # Resolve target destination: either chat_id or username
+                dest = target.chat_id
+                if (not dest or dest == 0) and target.username:
+                    dest = target.username
+
                 account_session_str = None
                 if campaign.sender_type == "userbot" and campaign.sender_account_id:
                     async with async_session_factory() as session:
@@ -208,14 +214,14 @@ async def execute_campaign(bot: Bot, campaign_id: int) -> None:
                 if account_session_str:
                     success, err_msg, retry_after = await send_via_userbot(
                         session_str=account_session_str,
-                        target_identifier=target.chat_id,
+                        target_identifier=dest,
                         content_type=campaign.content_type,
                         text_content=campaign.text_content,
                     )
                 else:
                     success, err_msg, retry_after = await send_single_message(
                         bot=bot,
-                        chat_id=target.chat_id,
+                        chat_id=dest,
                         content_type=campaign.content_type,
                         text_content=campaign.text_content,
                         file_id=campaign.file_id,
@@ -225,6 +231,7 @@ async def execute_campaign(bot: Bot, campaign_id: int) -> None:
                     total_success += 1
                 else:
                     total_failed += 1
+                    last_err_msg = err_msg
 
                 # Log result
                 async with async_session_factory() as session:
@@ -272,6 +279,7 @@ async def execute_campaign(bot: Bot, campaign_id: int) -> None:
             success_count=total_success,
             failed_count=total_failed,
             duration_str=duration_str,
+            last_error=last_err_msg,
         )
 
     except Exception as e:
